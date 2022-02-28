@@ -1,0 +1,49 @@
+class SimpleMACD(QCAlgorithm):
+
+    def Initialize(self):
+        self.SetStartDate(2021, 2, 27)  # Set Start Date
+        self.SetCash(100000)  # Set Strategy Cash
+        
+        self.AddEquity("MSFT", Resolution.Minute)
+        
+        self.macd = self.MACD("MSFT", 12, 26, 9, MovingAverageType.Exponential, Resolution.Daily)
+        self.rsi = self.RSI("MSFT", 10,  MovingAverageType.Exponential, Resolution.Daily)
+        self.SetWarmUp(timedelta(20))
+        
+        self.previous = datetime.min
+        self.buy_time = self.Time
+
+        self.PlotIndicator("MACD", True, self.macd, self.macd.Signal)
+        self.PlotIndicator("MSFT", self.macd.Fast, self.macd.Slow)
+
+    def OnData(self, data):
+
+        #check if indicator is ready
+        if not self.macd.IsReady: return
+        if not self.rsi.IsReady: return
+        
+        #check if a day has passed
+        if self.previous.date == datetime.date: return
+    
+        tolerance = .0010
+        
+        holdings = self.Portfolio["MSFT"].Quantity
+        shares = int(self.Portfolio.Cash / self.Portfolio["MSFT"].Price)
+        #self.Debug(shares)
+
+        signalDeltaPercent = (self.macd.Current.Value - self.macd.Signal.Current.Value)/self.macd.Fast.Current.Value
+        rsi_sig = self.rsi.Current.Value >= 70
+
+        
+        # if our macd is greater than our signal, then let's go long
+        if holdings <= 0 and signalDeltaPercent > tolerance:  # 0.01%
+            # longterm says buy as well
+            self.buy_time = self.Time
+            if not self.Portfolio.Invested:
+                self.MarketOrder("MSFT", shares)
+
+        # if RSI is showing overbought, sell
+        elif holdings >= 0 and rsi_sig and self.buy_time.day >= 7:
+            self.Liquidate()
+
+        self.previous = self.Time
