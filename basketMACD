@@ -1,0 +1,83 @@
+class basketMACD(QCAlgorithm):
+
+    def Initialize(self):
+        self.SetStartDate(2021, 3, 1)  # Set Start Date
+        self.SetCash(100000)  # Set Strategy Cash
+        
+        #ALSO TRY: ETFs, sector ETFs, specific sectors? --> pairs trading (not yet)
+        #basket of stocks to trade
+        self.basket = ['AMGN', 'APO', 'C', 'CRM', 'CVX', 'DIS', 'EMR', 'FMC', 'GOOG', 'GS', 'HEDJ', 'HOLX', 
+        'J', 'KMI', 'LH', 'MSFT', 'PANW', 'QCOM', 'QRVO', 'STZ', 'SYK', 'TJX', 'TMO', 'TTWO', 'TXT', 'VOO', 'WMT']
+        
+        #get a dict of the ticker with its respective indicators
+        self.basket_i = {}
+        for t in self.basket:
+            self.AddEquity(t, Resolution.Daily)
+            self.basket_i[t] = [self.MACD(t, 12, 26, 9, MovingAverageType.Exponential, Resolution.Daily),
+                                self.RSI(t, 10,  MovingAverageType.Exponential, Resolution.Daily)]
+        
+        #making dict of ticker with its positional data
+        self.basket_pos = {}
+        for t in self.basket:
+            #ticker: shares, time since last buy
+            self.basket_pos[t] = [self.Portfolio[t].Quantity, 0]
+        
+        #make sure indicators are ready
+        self.SetWarmUp(timedelta(20))
+        
+        #timers for selling and buying
+        self.previous = datetime.min
+        #self. = self.Time
+
+        #parameters (don't need to optimize anymore)
+        self.max_holdings = 8 # <- maybe optimize this
+        self.p = float(self.GetParameter("tolerance"))
+        self.z = int(self.GetParameter("sell_period"))
+
+
+    def OnData(self, data):
+        
+        #need to check for all indicators for all equities
+        for ticker, inds in self.basket_i.items():
+            if not inds[0].IsReady: return
+            elif not inds[1].IsReady: return
+        
+        #check if a day has passed before reassessing basket
+        if self.previous.date == datetime.date: return
+    
+        #vars for trading and timer
+        tolerance = self.p
+        null_zone = self.z
+        curr_holdings = len(list(filter(lambda x: x > 0, [d[0] for t, d in self.basket_pos.items()])))
+        cash_div = 0
+        if self.max_holdings - curr_holdings != 0:
+            cash_div = self.Portfolio.Cash / (self.max_holdings - curr_holdings)
+        
+        #confirm stock quantites (delay from market order?)
+        for t in self.basket_pos:
+            self.basket_pos[t][0] = self.Portfolio[t].Quantity
+        
+        #sell first
+        if curr_holdings > 0:
+            for t, data in self.basket_pos.items():
+                if data[0] > 0 and (self.Time - data[1]).days >= null_zone: #
+                    signalDeltaPercent = (self.basket_i[t][0].Current.Value - self.basket_i[t][0].Signal.Current.Value)/self.basket_i[t][0].Fast.Current.Value
+                    rsi_sig = self.basket_i[t][1].Current.Value >= 70
+                    if (rsi_sig or signalDeltaPercent <= tolerance):
+                        self.MarketOrder(t, -(data[0]))
+        
+        self.Debug('a')    
+        #buy second
+        for t, data in self.basket_pos.items():
+            if data[0] == 0 and curr_holdings < self.max_holdings:
+                signalDeltaPercent = (self.basket_i[t][0].Current.Value - self.basket_i[t][0].Signal.Current.Value)/self.basket_i[t][0].Fast.Current.Value
+                if signalDeltaPercent > tolerance and int(cash_div / self.Portfolio[t].Price) > 0:
+                    self.MarketOrder(t, int(cash_div / self.Portfolio[t].Price))
+                    curr_holdings += 1
+                    #self.basket_pos[t][0] = self.Portfolio[t].Quantity
+                    self.basket_pos[t][1] = self.Time
+        
+        #for checking days
+        self.previous = self.Time
+        
+        
